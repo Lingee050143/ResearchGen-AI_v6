@@ -40,13 +40,25 @@ export const useResearchStore = create<ResearchStore>()(
       setStatus: (status) => set({ status }),
       setStep: (step) => set({ currentStep: step }),
       updateData: (key, payload, isUserOverride = false) => set((state) => {
-        const newData = {
-          ...state.data,
-          [key]: { ...state.data[key], ...payload }
-        };
-        const newOverrides = isUserOverride 
-          ? { ...state.userOverrides, [key]: { ...state.userOverrides[key], ...payload } }
-          : state.userOverrides;
+        let mergedData;
+        if (Array.isArray(payload) || typeof payload !== 'object' || payload === null) {
+          mergedData = payload;
+        } else {
+          mergedData = { ...state.data[key], ...payload };
+        }
+
+        const newData = { ...state.data, [key]: mergedData };
+        
+        let newOverrides = state.userOverrides;
+        if (isUserOverride) {
+          let mergedOverride;
+          if (Array.isArray(payload) || typeof payload !== 'object' || payload === null) {
+            mergedOverride = payload;
+          } else {
+            mergedOverride = { ...state.userOverrides[key], ...payload };
+          }
+          newOverrides = { ...state.userOverrides, [key]: mergedOverride };
+        }
           
         return { data: newData, userOverrides: newOverrides };
       }),

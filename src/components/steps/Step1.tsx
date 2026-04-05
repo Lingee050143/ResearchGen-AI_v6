@@ -11,12 +11,12 @@ export function Step1() {
   const { data, updateData, setStep } = useResearchStore();
   const router = useRouter();
   
-  const idea = data.idea || {
-    serviceName: '',
-    problem: '',
-    scenario: '',
-    targetUser: '',
-    tags: [] as string[],
+  const idea = {
+    serviceName: data.idea?.serviceName || '',
+    problem: data.idea?.problem || '',
+    scenario: data.idea?.scenario || '',
+    targetUser: data.idea?.targetUser || '',
+    tags: data.idea?.tags || [],
   };
 
   const handleChange = (field: string, value: any) => {
