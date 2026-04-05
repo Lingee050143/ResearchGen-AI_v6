@@ -11,6 +11,8 @@ export function Step1() {
   const { data, updateData, setStep } = useResearchStore();
   const router = useRouter();
   
+  const [uploadedFile, setUploadedFile] = React.useState<string | null>(null);
+
   const idea = {
     serviceName: data.idea?.serviceName || '',
     problem: data.idea?.problem || '',
@@ -23,11 +25,28 @@ export function Step1() {
     updateData('idea', { [field]: value }, true);
   };
 
-  const isFormValid = idea.serviceName?.length >= 3 && idea.problem?.length >= 10 && idea.scenario?.length >= 10 && idea.tags?.length > 0;
+  const isFormValid = idea.serviceName?.length >= 2 && idea.problem?.length >= 2 && idea.scenario?.length >= 2 && idea.tags?.length > 0;
 
   useEffect(() => {
     setStep(1);
-  }, [setStep]);
+    if (data.reviews && data.reviews.length > 0) {
+      setUploadedFile('기존 업로드된 데이터');
+    }
+  }, [setStep, data.reviews]);
+
+  const handleFileUpload = (file: File) => {
+    import('papaparse').then((Papa) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const sampled = results.data.slice(0, 500);
+          updateData('reviews', sampled, true);
+          setUploadedFile(file.name);
+        }
+      });
+    });
+  };
 
   const handleNext = () => {
     if (isFormValid) {
@@ -130,7 +149,24 @@ export function Step1() {
                 <label className="text-[12px] font-bold text-[var(--c-neutral-900)] mb-[5px] flex items-center gap-[6px]">
                   데이터 업로드 <span className="text-[10.5px] font-medium text-[var(--c-neutral-500)] bg-[var(--c-neutral-100)] px-[7px] py-[1px] rounded-full">선택</span>
                 </label>
-                <UploadZone onFileAccepted={(f) => console.log(f)} />
+                {uploadedFile ? (
+                  <div className="bg-[var(--c-success-subtle)] border border-[#A7F3D0] rounded-[var(--r-sm)] p-[16px] flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                       <span className="text-[12px] font-bold text-[#065F46]">✓ {uploadedFile}</span>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        updateData('reviews', [], true);
+                        setUploadedFile(null);
+                      }}
+                      className="text-[11px] text-[var(--c-neutral-500)] hover:text-[#B91C1C] underline"
+                    >
+                      변경하기
+                    </button>
+                  </div>
+                ) : (
+                  <UploadZone onFileAccepted={handleFileUpload} />
+                )}
               </div>
             </div>
           </div>
