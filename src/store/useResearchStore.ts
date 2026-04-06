@@ -44,7 +44,11 @@ export const useResearchStore = create<ResearchStore>()(
         if (Array.isArray(payload) || typeof payload !== 'object' || payload === null) {
           mergedData = payload;
         } else {
-          mergedData = { ...state.data[key], ...payload };
+          // 방어 로직: 기존 데이터가 엉망이거나 객체가 아니면 빈 객체로 초기화
+          const baseData = (typeof state.data[key] === 'object' && !Array.isArray(state.data[key]) && state.data[key] !== null) 
+            ? state.data[key] 
+            : {};
+          mergedData = { ...baseData, ...payload };
         }
 
         const newData = { ...state.data, [key]: mergedData };
@@ -55,7 +59,11 @@ export const useResearchStore = create<ResearchStore>()(
           if (Array.isArray(payload) || typeof payload !== 'object' || payload === null) {
             mergedOverride = payload;
           } else {
-            mergedOverride = { ...state.userOverrides[key], ...payload };
+            // 방어 로직 동일 적용
+            const baseOverride = (typeof state.userOverrides[key] === 'object' && !Array.isArray(state.userOverrides[key]) && state.userOverrides[key] !== null) 
+              ? state.userOverrides[key] 
+              : {};
+            mergedOverride = { ...baseOverride, ...payload };
           }
           newOverrides = { ...state.userOverrides, [key]: mergedOverride };
         }

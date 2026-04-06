@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
@@ -11,10 +11,14 @@ export function Step1() {
   const { data, updateData, setStep } = useResearchStore();
   const router = useRouter();
   
-  const [uploadedFile, setUploadedFile] = React.useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  
+  // 💡 Hydration Mismatch 방어 (Next.js 필수)
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
-  // 1. data.idea를 직접 참조하여 리렌더링 감지 강화
-  // idea 객체 자체를 memo하여 불필요한 계산 방지 및 의존성 안정화
   const idea = useMemo(() => {
     const rawIdea = data.idea || {};
     return {
@@ -26,9 +30,9 @@ export function Step1() {
     };
   }, [data.idea]);
 
-  // 2. 폼 유효성 검사 로직 강화 (공백 제거 및 다중 조건 체크)
   const isFormValid = useMemo(() => {
-    const hasName = idea.serviceName.trim().length >= 2;
+    // 한글 1글자 이름(예: '앱')도 통과하도록 1로 완화
+    const hasName = idea.serviceName.trim().length >= 1;
     const hasProblem = idea.problem.trim().length >= 2;
     const hasScenario = idea.scenario.trim().length >= 2;
     const hasTags = idea.tags.length > 0;
@@ -37,13 +41,11 @@ export function Step1() {
   }, [idea]);
 
   const handleChange = (field: string, value: any) => {
-    // 필드별로 idea 객체 내부에 정확히 병합되도록 전달
     updateData('idea', { [field]: value }, true);
   };
 
   useEffect(() => {
     setStep(1);
-    // 기존 업로드 파일 상태 복원
     if (data.reviews && data.reviews.length > 0 && !uploadedFile) {
       setUploadedFile('기존 업로드된 데이터');
     }
@@ -68,6 +70,9 @@ export function Step1() {
       router.push('/steps/2');
     }
   };
+
+  // 💡 Hydration 전에는 UI를 렌더링하지 않음
+  if (!isMounted) return null;
 
   return (
     <>
@@ -138,6 +143,12 @@ export function Step1() {
               tags={idea.tags} 
               onChange={(tags) => handleChange('tags', tags)} 
             />
+            {/* 💡 UX 함정 방지: 다른 건 썼는데 태그가 비어있을 때 안내 문구 노출 */}
+            {idea.serviceName.length > 0 && idea.tags.length === 0 && (
+              <span className="text-[11px] text-[var(--c-error)] mt-1 animate-pulse">
+                ※ 기능을 입력하고 반드시 Enter 키를 눌러 태그를 생성해주세요!
+              </span>
+            )}
           </div>
 
           <div className="flex flex-col mt-[18px]">
