@@ -1,8 +1,9 @@
 'use client';
 import React from 'react';
 import Link from 'next/link';
+import { useRouter, usePathname } from 'next/navigation';
 import { useResearchStore } from '@/store/useResearchStore';
-import { Search } from 'lucide-react';
+import { Search, LayoutDashboard, Plus } from 'lucide-react';
 
 const STEPS = [
   '아이디어 입력', 'AI 분석', '경쟁사 분석', '리뷰 분석',
@@ -10,7 +11,15 @@ const STEPS = [
 ];
 
 export function Sidebar() {
-  const { currentStep } = useResearchStore();
+  const { currentStep, startNewResearch } = useResearchStore();
+  const router = useRouter();
+  const pathname = usePathname();
+  const isDashboard = pathname === '/dashboard';
+
+  const handleNewResearch = () => {
+    startNewResearch();
+    router.push('/steps/1');
+  };
 
   return (
     <aside className="hidden md:flex flex-col flex-shrink-0 w-[var(--sidebar-w)] bg-[var(--c-sidebar-bg)] h-screen sticky top-0 overflow-y-auto pb-[24px]">
@@ -27,32 +36,47 @@ export function Sidebar() {
       </div>
 
       <div className="text-[9px] font-bold tracking-[0.12em] uppercase text-[#4A4870] p-[12px_16px_4px]">대시보드</div>
-      <Link href="/" className="flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] text-[var(--c-sidebar-text)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#e0e0f0] transition-all">
-        <div className="w-[18px] h-[18px] rounded-full border-[1.5px] border-[rgba(255,255,255,0.15)] flex items-center justify-center text-[14px] text-[rgba(255,255,255,0.4)]">⊞</div>
-        대시보드
+      <Link
+        href="/dashboard"
+        className={`flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] transition-all ${
+          isDashboard
+            ? 'bg-[rgba(14,165,233,0.18)] text-white font-semibold'
+            : 'text-[var(--c-sidebar-text)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#e0e0f0]'
+        }`}
+      >
+        <LayoutDashboard className="w-[14px] h-[14px] shrink-0 opacity-70" />
+        저장된 리포트
       </Link>
 
       <div className="text-[9px] font-bold tracking-[0.12em] uppercase text-[#4A4870] p-[12px_16px_4px] mt-2">현재 프로젝트</div>
-      
+
+      <button
+        onClick={handleNewResearch}
+        className="flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] text-[var(--c-ai)] hover:bg-[rgba(14,165,233,0.12)] transition-all text-left"
+      >
+        <Plus className="w-[14px] h-[14px] shrink-0" />
+        새 리서치 시작
+      </button>
+
       {STEPS.map((label, i) => {
         const stepNum = i + 1;
-        const isActive = currentStep === stepNum;
-        const isDone = currentStep > stepNum;
-        
+        const isActive = !isDashboard && currentStep === stepNum;
+        const isDone = !isDashboard && currentStep > stepNum;
+
         return (
-          <Link 
+          <Link
             key={stepNum}
             href={`/steps/${stepNum}`}
             className={`flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] transition-all relative ${
-              isActive 
-                ? 'bg-[rgba(14,165,233,0.18)] text-white font-semibold before:content-[""] before:absolute before:-left-[8px] before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-[18px] before:bg-[var(--c-ai)] before:rounded-[0_2px_2px_0]' 
+              isActive
+                ? 'bg-[rgba(14,165,233,0.18)] text-white font-semibold before:content-[""] before:absolute before:-left-[8px] before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-[18px] before:bg-[var(--c-ai)] before:rounded-[0_2px_2px_0]'
                 : 'text-[var(--c-sidebar-text)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#e0e0f0]'
             }`}
           >
             <div className={`w-[18px] h-[18px] rounded-full border-[1.5px] flex items-center justify-center text-[9.5px] font-bold shrink-0 ${
-              isActive 
-                ? 'bg-[var(--c-ai)] border-[var(--c-ai)] text-white' 
-                : isDone 
+              isActive
+                ? 'bg-[var(--c-ai)] border-[var(--c-ai)] text-white'
+                : isDone
                   ? 'bg-[var(--c-success)] border-[var(--c-success)] text-white'
                   : 'border-[rgba(255,255,255,0.15)] text-[rgba(255,255,255,0.4)]'
             }`}>

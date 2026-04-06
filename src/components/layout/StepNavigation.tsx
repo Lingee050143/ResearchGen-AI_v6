@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { useResearchStore } from '@/store/useResearchStore';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 
 const STEPS = [
   '아이디어 입력', 'AI 분석', '경쟁사 분석', '리뷰 분석',
@@ -11,6 +11,9 @@ const STEPS = [
 export function StepNavigation() {
   const { currentStep } = useResearchStore();
   const router = useRouter();
+  const pathname = usePathname();
+
+  if (pathname === '/dashboard') return null;
 
   const handleStepClick = (stepNum: number) => {
     if (stepNum <= currentStep) {
