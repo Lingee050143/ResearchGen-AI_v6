@@ -68,6 +68,9 @@ export async function runClaudeWithRetry<T>(
   let attempt = 0;
   let lastError: Error | null = null;
   
+  // 1. API 키 정제 (ISO-8859-1 통신 에러 방어)
+  const sanitizedApiKey = apiKey.trim().replace(/[^\x20-\x7E]/g, '');
+
   while (attempt < MAX_RETRIES) {
     attempt++;
     try {
@@ -79,12 +82,14 @@ export async function runClaudeWithRetry<T>(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
+          'x-api-key': sanitizedApiKey,
+          // 2. Anthropic 필수 헤더 2종 추가 (CORS 및 404 에러 방어)
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: options.model || 'claude-3-5-sonnet-20240620',
+          // 3. 고유 모델명 강제 고정 (404 Not Found 에러 방어)
+          model: 'claude-3-5-sonnet-20240620',
           max_tokens: options.max_tokens || 4096,
           temperature: options.temperature || 0.2,
           system: options.system,
@@ -101,14 +106,10 @@ export async function runClaudeWithRetry<T>(
       const data = await response.json();
       const content = data.content[0]?.text || '';
       
-      // Extract JSON if it contains markdown formatting
-      let rawJson = content;
-      const jsonMatch = content.match(/```(?:json)?([\s\S]*?)```/);
-      if (jsonMatch) {
-        rawJson = jsonMatch[1];
-      }
+      // 4. JSON 파싱 전 Markdown 블록 제거 (파싱 에러 방어)
+      const cleanJson = content.replace(/```(?:json)?([\s\S]*?)```/g, '$1').trim();
       
-      const parsed = JSON.parse(rawJson);
+      const parsed = JSON.parse(cleanJson);
       
       // Zod validation. If it fails, an error is thrown and caught by retry block.
       return validateSchema<T>(parsed, schema);
