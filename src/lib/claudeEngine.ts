@@ -84,7 +84,7 @@ export async function runClaudeWithRetry<T>(
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: options.model || 'claude-3-5-sonnet-latest',
+          model: options.model || 'claude-3-5-sonnet-20240620',
           max_tokens: options.max_tokens || 4096,
           temperature: options.temperature || 0.2,
           system: options.system,
