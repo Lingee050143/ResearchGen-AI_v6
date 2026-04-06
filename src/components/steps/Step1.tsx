@@ -22,10 +22,19 @@ export function Step1() {
   };
 
   const handleChange = (field: string, value: any) => {
+    // 기존 updateData 호출 방식 유지
     updateData('idea', { [field]: value }, true);
   };
 
-  const isFormValid = idea.serviceName?.length >= 2 && idea.problem?.length >= 2 && idea.scenario?.length >= 2 && idea.tags?.length > 0;
+  // 1. isFormValid 로직 보완 (null 체크 강화)
+  const isFormValid = React.useMemo(() => {
+    const hasName = (idea.serviceName || '').trim().length >= 2;
+    const hasProblem = (idea.problem || '').trim().length >= 2;
+    const hasScenario = (idea.scenario || '').trim().length >= 2;
+    const hasTags = Array.isArray(idea.tags) && idea.tags.length > 0;
+    
+    return hasName && hasProblem && hasScenario && hasTags;
+  }, [idea]);
 
   useEffect(() => {
     setStep(1);
