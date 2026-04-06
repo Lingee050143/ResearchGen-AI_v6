@@ -1,11 +1,11 @@
 'use client';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
 import { TagInput } from '../ui/TagInput';
 import { UploadZone } from '../ui/UploadZone';
-import { Lightbulb, Info } from 'lucide-react';
+import { Lightbulb } from 'lucide-react';
 
 export function Step1() {
   const { data, updateData, setStep } = useResearchStore();
@@ -13,35 +13,41 @@ export function Step1() {
   
   const [uploadedFile, setUploadedFile] = React.useState<string | null>(null);
 
-  const idea = {
-    serviceName: data.idea?.serviceName || '',
-    problem: data.idea?.problem || '',
-    scenario: data.idea?.scenario || '',
-    targetUser: data.idea?.targetUser || '',
-    tags: data.idea?.tags || [],
-  };
+  // 1. data.idea를 직접 참조하여 리렌더링 감지 강화
+  // idea 객체 자체를 memo하여 불필요한 계산 방지 및 의존성 안정화
+  const idea = useMemo(() => {
+    const rawIdea = data.idea || {};
+    return {
+      serviceName: rawIdea.serviceName || '',
+      problem: rawIdea.problem || '',
+      scenario: rawIdea.scenario || '',
+      targetUser: rawIdea.targetUser || '',
+      tags: Array.isArray(rawIdea.tags) ? rawIdea.tags : [],
+    };
+  }, [data.idea]);
 
-  const handleChange = (field: string, value: any) => {
-    // 기존 updateData 호출 방식 유지
-    updateData('idea', { [field]: value }, true);
-  };
-
-  // 1. isFormValid 로직 보완 (null 체크 강화)
-  const isFormValid = React.useMemo(() => {
-    const hasName = (idea.serviceName || '').trim().length >= 2;
-    const hasProblem = (idea.problem || '').trim().length >= 2;
-    const hasScenario = (idea.scenario || '').trim().length >= 2;
-    const hasTags = Array.isArray(idea.tags) && idea.tags.length > 0;
+  // 2. 폼 유효성 검사 로직 강화 (공백 제거 및 다중 조건 체크)
+  const isFormValid = useMemo(() => {
+    const hasName = idea.serviceName.trim().length >= 2;
+    const hasProblem = idea.problem.trim().length >= 2;
+    const hasScenario = idea.scenario.trim().length >= 2;
+    const hasTags = idea.tags.length > 0;
     
     return hasName && hasProblem && hasScenario && hasTags;
   }, [idea]);
 
+  const handleChange = (field: string, value: any) => {
+    // 필드별로 idea 객체 내부에 정확히 병합되도록 전달
+    updateData('idea', { [field]: value }, true);
+  };
+
   useEffect(() => {
     setStep(1);
-    if (data.reviews && data.reviews.length > 0) {
+    // 기존 업로드 파일 상태 복원
+    if (data.reviews && data.reviews.length > 0 && !uploadedFile) {
       setUploadedFile('기존 업로드된 데이터');
     }
-  }, [setStep, data.reviews]);
+  }, [setStep, data.reviews, uploadedFile]);
 
   const handleFileUpload = (file: File) => {
     import('papaparse').then((Papa) => {
