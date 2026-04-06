@@ -4,6 +4,7 @@ import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { EditableText } from '../ui/EditableText';
 import { useApiKey } from '../ui/ApiKeyModal';
 import { runClaudeWithRetry, buildContextMetadata } from '@/lib/claudeEngine';
 import { z } from 'zod';
@@ -22,12 +23,41 @@ const Step7Schema = z.object({
 });
 
 type Step7Result = z.infer<typeof Step7Schema>;
+type Stage = Step7Result['stages'][number];
 
 const EMOTION_CONFIG = {
   happy: { label: '긍정', color: 'var(--c-success)', emoji: '😊' },
   neutral: { label: '중립', color: 'var(--c-warning)', emoji: '😐' },
   frustrated: { label: '부정', color: 'var(--c-error)', emoji: '😟' },
 };
+
+function CopyButton({ text, label = '복사' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="text-[11px] text-[var(--c-neutral-400)] hover:text-[var(--c-primary)] transition-colors flex items-center gap-[3px] shrink-0"
+    >
+      {copied ? '✓ 복사됨' : label}
+    </button>
+  );
+}
+
+function stageToMarkdown(stage: Stage, idx: number): string {
+  const cfg = EMOTION_CONFIG[stage.emotion];
+  return [
+    `## ${idx + 1}. ${stage.name} ${cfg.emoji}`,
+    `\n### 행동\n${stage.actions.map(a => `- ${a}`).join('\n')}`,
+    `\n### 생각 / 느낌\n${stage.thoughts.map(t => `- ${t}`).join('\n')}`,
+    `\n### 기회 포인트\n${stage.opportunities.map(o => `- ${o}`).join('\n')}`,
+    `\n*출처: ${stage.dataSources.join(', ')}*`,
+  ].join('\n');
+}
 
 export function Step7() {
   const { data, updateData, setStep, userOverrides } = useResearchStore();
@@ -58,7 +88,7 @@ export function Step7() {
         userOverrides
       );
 
-      const result = await runClaudeWithRetry(
+      const res = await runClaudeWithRetry(
         apiKey,
         {
           system: 'You are an expert UX Researcher. Create a detailed user journey map based on the primary persona and research insights. Return ONLY valid JSON.',
@@ -73,12 +103,35 @@ export function Step7() {
         setProgressMsg
       );
 
-      updateData('journeyMap', result);
+      updateData('journeyMap', res);
     } catch (err: any) {
       setError(err.message || '사용자 여정 생성 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
+  };
+
+  // ── Patch helpers (userOverride=true → saved to userOverrides) ───────────────
+  const patchStages = (updatedStages: Stage[]) => {
+    updateData('journeyMap', { ...(data.journeyMap || {}), stages: updatedStages }, true);
+  };
+
+  const saveAction = (sIdx: number, aIdx: number, val: string) => {
+    patchStages((result?.stages || []).map((s, i) =>
+      i === sIdx ? { ...s, actions: s.actions.map((a, j) => j === aIdx ? val : a) } : s
+    ));
+  };
+
+  const saveThought = (sIdx: number, tIdx: number, val: string) => {
+    patchStages((result?.stages || []).map((s, i) =>
+      i === sIdx ? { ...s, thoughts: s.thoughts.map((t, j) => j === tIdx ? val : t) } : s
+    ));
+  };
+
+  const saveOpportunity = (sIdx: number, oIdx: number, val: string) => {
+    patchStages((result?.stages || []).map((s, i) =>
+      i === sIdx ? { ...s, opportunities: s.opportunities.map((o, j) => j === oIdx ? val : o) } : s
+    ));
   };
 
   const stages = result?.stages || [];
@@ -116,7 +169,7 @@ export function Step7() {
           <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[16px]">
             <p className="text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider mb-[10px]">감정 곡선</p>
             <div className="flex items-end gap-[4px] h-[48px]">
-              {stages.map((s, i) => {
+              {stages.map((s) => {
                 const heights = { happy: '100%', neutral: '55%', frustrated: '20%' };
                 const cfg = EMOTION_CONFIG[s.emotion];
                 return (
@@ -151,10 +204,12 @@ export function Step7() {
                     <div className="w-[24px] h-[24px] rounded-full bg-[var(--c-primary-100)] text-[var(--c-primary)] text-[11px] font-bold flex items-center justify-center shrink-0">
                       {idx + 1}
                     </div>
-                    <span className="text-[14px] font-bold text-[var(--c-neutral-900)]">{stage.name}</span>
+                    <span className="text-[14px] font-bold text-[var(--c-neutral-900)] flex-1">{stage.name}</span>
                     <Badge variant={stage.emotion === 'happy' ? 'success' : stage.emotion === 'frustrated' ? 'error' : 'neutral'}>
                       {cfg.emoji} {cfg.label}
                     </Badge>
+                    {/* Copy button top-right of card */}
+                    <CopyButton text={stageToMarkdown(stage, idx)} label="단계 복사" />
                   </div>
 
                   {/* Stage body */}
@@ -164,7 +219,13 @@ export function Step7() {
                       <ul className="space-y-[4px]">
                         {stage.actions.map((a, i) => (
                           <li key={i} className="text-[12px] text-[var(--c-neutral-700)] flex items-start gap-[5px]">
-                            <span className="text-[var(--c-primary)] mt-[1px]">›</span>{a}
+                            <span className="text-[var(--c-primary)] mt-[2px] shrink-0">›</span>
+                            <EditableText
+                              value={a}
+                              onSave={val => saveAction(idx, i, val)}
+                              as="textarea"
+                              rows={2}
+                            />
                           </li>
                         ))}
                       </ul>
@@ -174,7 +235,13 @@ export function Step7() {
                       <ul className="space-y-[4px]">
                         {stage.thoughts.map((t, i) => (
                           <li key={i} className="text-[12px] text-[var(--c-neutral-700)] italic flex items-start gap-[5px]">
-                            <span className="text-[var(--c-ai)] mt-[1px]">❝</span>{t}
+                            <span className="text-[var(--c-ai)] mt-[2px] shrink-0">❝</span>
+                            <EditableText
+                              value={t}
+                              onSave={val => saveThought(idx, i, val)}
+                              as="textarea"
+                              rows={2}
+                            />
                           </li>
                         ))}
                       </ul>
@@ -184,7 +251,13 @@ export function Step7() {
                       <ul className="space-y-[4px]">
                         {stage.opportunities.map((o, i) => (
                           <li key={i} className="text-[12px] text-[var(--c-neutral-700)] flex items-start gap-[5px]">
-                            <span className="text-[var(--c-warning)] mt-[1px]">★</span>{o}
+                            <span className="text-[var(--c-warning)] mt-[2px] shrink-0">★</span>
+                            <EditableText
+                              value={o}
+                              onSave={val => saveOpportunity(idx, i, val)}
+                              as="textarea"
+                              rows={2}
+                            />
                           </li>
                         ))}
                       </ul>

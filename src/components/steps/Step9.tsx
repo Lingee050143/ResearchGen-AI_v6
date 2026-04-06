@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
+import { EditableText } from '../ui/EditableText';
 import { useApiKey } from '../ui/ApiKeyModal';
 import { runClaudeWithRetry, buildContextMetadata } from '@/lib/claudeEngine';
 import { z } from 'zod';
@@ -40,21 +41,19 @@ const PRIORITY_CONFIG = {
   low:    { label: '낮음', color: 'var(--c-success)', bg: '#F0FDF4', border: '#A7F3D0' },
 };
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = '복사' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
-
   const handleCopy = async () => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
   return (
     <button
       onClick={handleCopy}
       className="text-[11px] text-[var(--c-neutral-400)] hover:text-[var(--c-primary)] transition-colors flex items-center gap-[3px] shrink-0"
     >
-      {copied ? '✓ 복사됨' : '복사'}
+      {copied ? '✓ 복사됨' : label}
     </button>
   );
 }
@@ -95,7 +94,7 @@ export function Step9() {
         userOverrides
       );
 
-      const result = await runClaudeWithRetry(
+      const res = await runClaudeWithRetry(
         apiKey,
         {
           max_tokens: 8192,
@@ -111,12 +110,47 @@ export function Step9() {
         setProgressMsg
       );
 
-      updateData('finalReport', result);
+      updateData('finalReport', res);
     } catch (err: any) {
       setError(err.message || '보고서 생성 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
+  };
+
+  // ── Patch helper (userOverride=true → saved to userOverrides) ────────────────
+  const patchReport = (patch: Partial<Step9Result>) => {
+    updateData('finalReport', { ...result, ...patch }, true);
+  };
+
+  const saveKeyFinding = (idx: number, field: 'title' | 'detail' | 'evidence', val: string) => {
+    patchReport({
+      keyFindings: (result?.keyFindings || []).map((f, i) => i === idx ? { ...f, [field]: val } : f),
+    });
+  };
+
+  const saveJourneyHighlight = (idx: number, val: string) => {
+    patchReport({
+      journeyHighlights: (result?.journeyHighlights || []).map((h, i) => i === idx ? val : h),
+    });
+  };
+
+  const saveTopOpportunity = (idx: number, field: 'title' | 'rationale', val: string) => {
+    patchReport({
+      topOpportunities: (result?.topOpportunities || []).map((o, i) => i === idx ? { ...o, [field]: val } : o),
+    });
+  };
+
+  const saveRecommendation = (idx: number, field: 'title' | 'description', val: string) => {
+    patchReport({
+      recommendations: (result?.recommendations || []).map((r, i) => i === idx ? { ...r, [field]: val } : r),
+    });
+  };
+
+  const saveNextStep = (idx: number, val: string) => {
+    patchReport({
+      nextSteps: (result?.nextSteps || []).map((s, i) => i === idx ? val : s),
+    });
   };
 
   const fullReportText = result ? [
@@ -154,17 +188,25 @@ export function Step9() {
           <Button variant="secondary" size="sm" className="mt-3" onClick={runAnalysis}>재시도</Button>
         </div>
       ) : result ? (
-        <div className="space-y-[20px] pb-[80px]">
+        <div id="report-print-area" className="space-y-[20px] pb-[80px]">
           {/* Full copy button */}
-          <div className="flex justify-end">
-            <CopyButton text={fullReportText} />
+          <div className="flex justify-end no-print">
+            <CopyButton text={fullReportText} label="전체 복사" />
           </div>
 
           {/* Executive Summary */}
-          <ReportSection title="경영진 요약" text={result.executiveSummary} />
+          <ReportSection
+            title="경영진 요약"
+            text={result.executiveSummary}
+            onSave={val => patchReport({ executiveSummary: val })}
+          />
 
           {/* Problem Statement */}
-          <ReportSection title="문제 정의" text={result.problemStatement} />
+          <ReportSection
+            title="문제 정의"
+            text={result.problemStatement}
+            onSave={val => patchReport({ problemStatement: val })}
+          />
 
           {/* Key Findings */}
           <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[20px]">
@@ -178,10 +220,27 @@ export function Step9() {
                   <div className="w-[22px] h-[22px] rounded-full bg-[var(--c-primary-100)] text-[var(--c-primary)] text-[11px] font-bold flex items-center justify-center shrink-0 mt-[1px]">
                     {i + 1}
                   </div>
-                  <div>
-                    <p className="text-[13px] font-bold text-[var(--c-neutral-900)]">{finding.title}</p>
-                    <p className="text-[12.5px] text-[var(--c-neutral-700)] mt-[2px]">{finding.detail}</p>
-                    <p className="text-[11px] text-[var(--c-neutral-500)] mt-[4px] italic">근거: {finding.evidence}</p>
+                  <div className="flex-1 min-w-0">
+                    <EditableText
+                      value={finding.title}
+                      onSave={val => saveKeyFinding(i, 'title', val)}
+                      className="text-[13px] font-bold text-[var(--c-neutral-900)] block"
+                    />
+                    <EditableText
+                      value={finding.detail}
+                      onSave={val => saveKeyFinding(i, 'detail', val)}
+                      as="textarea"
+                      rows={2}
+                      className="text-[12.5px] text-[var(--c-neutral-700)] mt-[2px] block"
+                    />
+                    <p className="text-[11px] text-[var(--c-neutral-500)] mt-[4px] italic flex items-start gap-[3px]">
+                      <span>근거:</span>
+                      <EditableText
+                        value={finding.evidence}
+                        onSave={val => saveKeyFinding(i, 'evidence', val)}
+                        className="flex-1"
+                      />
+                    </p>
                   </div>
                 </div>
               ))}
@@ -189,7 +248,11 @@ export function Step9() {
           </div>
 
           {/* Persona Insights */}
-          <ReportSection title="페르소나 시사점" text={result.personaInsights} />
+          <ReportSection
+            title="페르소나 시사점"
+            text={result.personaInsights}
+            onSave={val => patchReport({ personaInsights: val })}
+          />
 
           {/* Journey Highlights */}
           <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[20px]">
@@ -200,7 +263,14 @@ export function Step9() {
             <ul className="space-y-[6px]">
               {result.journeyHighlights.map((h, i) => (
                 <li key={i} className="text-[13px] text-[var(--c-neutral-700)] flex items-start gap-[8px]">
-                  <span className="text-[var(--c-primary)] font-bold mt-[1px]">→</span>{h}
+                  <span className="text-[var(--c-primary)] font-bold mt-[1px] shrink-0">→</span>
+                  <EditableText
+                    value={h}
+                    onSave={val => saveJourneyHighlight(i, val)}
+                    as="textarea"
+                    rows={2}
+                    className="flex-1"
+                  />
                 </li>
               ))}
             </ul>
@@ -213,14 +283,24 @@ export function Step9() {
               <CopyButton text={result.topOpportunities.map(o => `${o.rank}. ${o.title}\n${o.rationale}`).join('\n\n')} />
             </div>
             <div className="space-y-[10px]">
-              {result.topOpportunities.map((opp) => (
+              {result.topOpportunities.map((opp, i) => (
                 <div key={opp.rank} className="flex items-start gap-[12px]">
                   <div className="w-[22px] h-[22px] rounded-full bg-[var(--c-warning)] text-white text-[11px] font-bold flex items-center justify-center shrink-0 mt-[1px]">
                     {opp.rank}
                   </div>
-                  <div>
-                    <p className="text-[13px] font-bold text-[var(--c-neutral-900)]">{opp.title}</p>
-                    <p className="text-[12.5px] text-[var(--c-neutral-700)] mt-[2px]">{opp.rationale}</p>
+                  <div className="flex-1 min-w-0">
+                    <EditableText
+                      value={opp.title}
+                      onSave={val => saveTopOpportunity(i, 'title', val)}
+                      className="text-[13px] font-bold text-[var(--c-neutral-900)] block"
+                    />
+                    <EditableText
+                      value={opp.rationale}
+                      onSave={val => saveTopOpportunity(i, 'rationale', val)}
+                      as="textarea"
+                      rows={2}
+                      className="text-[12.5px] text-[var(--c-neutral-700)] mt-[2px] block"
+                    />
                   </div>
                 </div>
               ))}
@@ -234,7 +314,7 @@ export function Step9() {
               <CopyButton text={result.recommendations.map(r => `[${r.priority}] ${r.title}\n${r.description}`).join('\n\n')} />
             </div>
             <div className="space-y-[10px]">
-              {result.recommendations.map((rec) => {
+              {result.recommendations.map((rec, i) => {
                 const cfg = PRIORITY_CONFIG[rec.priority];
                 return (
                   <div
@@ -243,15 +323,25 @@ export function Step9() {
                     style={{ backgroundColor: cfg.bg, borderColor: cfg.border }}
                   >
                     <div className="flex items-center gap-[8px] mb-[4px]">
-                      <p className="text-[13px] font-bold text-[var(--c-neutral-900)]">{rec.title}</p>
+                      <EditableText
+                        value={rec.title}
+                        onSave={val => saveRecommendation(i, 'title', val)}
+                        className="text-[13px] font-bold text-[var(--c-neutral-900)]"
+                      />
                       <span
-                        className="text-[10px] font-bold px-[6px] py-[1px] rounded-full text-white"
+                        className="text-[10px] font-bold px-[6px] py-[1px] rounded-full text-white shrink-0"
                         style={{ backgroundColor: cfg.color }}
                       >
                         {cfg.label}
                       </span>
                     </div>
-                    <p className="text-[12.5px] text-[var(--c-neutral-700)]">{rec.description}</p>
+                    <EditableText
+                      value={rec.description}
+                      onSave={val => saveRecommendation(i, 'description', val)}
+                      as="textarea"
+                      rows={2}
+                      className="text-[12.5px] text-[var(--c-neutral-700)] block"
+                    />
                   </div>
                 );
               })}
@@ -270,7 +360,13 @@ export function Step9() {
                   <span className="w-[18px] h-[18px] rounded-full border-2 border-[var(--c-primary)] text-[var(--c-primary)] text-[9px] font-bold flex items-center justify-center shrink-0 mt-[1px]">
                     {i + 1}
                   </span>
-                  {step}
+                  <EditableText
+                    value={step}
+                    onSave={val => saveNextStep(i, val)}
+                    as="textarea"
+                    rows={2}
+                    className="flex-1"
+                  />
                 </li>
               ))}
             </ul>
@@ -280,7 +376,7 @@ export function Step9() {
         <div className="text-center py-10 text-[var(--c-neutral-500)]">데이터를 불러올 수 없습니다.</div>
       )}
 
-      <div className="fixed bottom-0 left-0 md:left-[var(--sidebar-w)] right-0 bg-[var(--c-surface)] border-t border-[var(--c-border)] p-[12px_28px] flex items-center justify-between z-[100] shadow-[0_-4px_16px_rgba(26,24,64,0.06)]">
+      <div className="no-print fixed bottom-0 left-0 md:left-[var(--sidebar-w)] right-0 bg-[var(--c-surface)] border-t border-[var(--c-border)] p-[12px_28px] flex items-center justify-between z-[100] shadow-[0_-4px_16px_rgba(26,24,64,0.06)]">
         <div className="flex items-center gap-[10px]">
           <span className="text-[11.5px] text-[var(--c-success)] font-bold">완료 100%</span>
           <div className="w-[100px] h-[4px] bg-[var(--c-border)] rounded-[2px] overflow-hidden">
@@ -292,6 +388,11 @@ export function Step9() {
           {result && (
             <Button variant="secondary" onClick={() => { reset(); router.push('/steps/1'); }}>
               새 리서치 시작
+            </Button>
+          )}
+          {result && (
+            <Button variant="secondary" onClick={() => window.print()}>
+              PDF 다운로드
             </Button>
           )}
           {result && (
@@ -308,14 +409,28 @@ export function Step9() {
   );
 }
 
-function ReportSection({ title, text }: { title: string; text: string }) {
+function ReportSection({
+  title,
+  text,
+  onSave,
+}: {
+  title: string;
+  text: string;
+  onSave: (val: string) => void;
+}) {
   return (
     <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[20px]">
       <div className="flex items-center justify-between mb-[10px]">
         <h2 className="text-[14px] font-bold text-[var(--c-neutral-900)]">{title}</h2>
         <CopyButton text={text} />
       </div>
-      <p className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed">{text}</p>
+      <EditableText
+        value={text}
+        onSave={onSave}
+        as="textarea"
+        rows={3}
+        className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed w-full block"
+      />
     </div>
   );
 }

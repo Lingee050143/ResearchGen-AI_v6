@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
+import { EditableText } from '../ui/EditableText';
 import { useApiKey } from '../ui/ApiKeyModal';
 import { runClaudeWithRetry, buildContextMetadata } from '@/lib/claudeEngine';
 import { z } from 'zod';
@@ -29,10 +29,10 @@ type ViewMode = 'matrix' | 'list';
 function getQuadrant(opp: Opportunity) {
   const highImpact = opp.impact >= 3;
   const highEffort = opp.effort >= 3;
-  if (highImpact && !highEffort) return 'quick-wins'; // High Impact, Low Effort
-  if (highImpact && highEffort) return 'major';        // High Impact, High Effort
-  if (!highImpact && !highEffort) return 'fill-ins';   // Low Impact, Low Effort
-  return 'hard';                                        // Low Impact, High Effort
+  if (highImpact && !highEffort) return 'quick-wins';
+  if (highImpact && highEffort) return 'major';
+  if (!highImpact && !highEffort) return 'fill-ins';
+  return 'hard';
 }
 
 const QUADRANT_CONFIG = {
@@ -41,6 +41,23 @@ const QUADRANT_CONFIG = {
   'fill-ins':   { label: '단기 보완', sublabel: '낮은 임팩트 · 낮은 노력', color: '#FEF3C7', border: '#FCD34D', textColor: '#78350F' },
   'hard':       { label: '재검토 필요', sublabel: '낮은 임팩트 · 높은 노력', color: '#FEE2E2', border: '#FCA5A5', textColor: '#991B1B' },
 };
+
+function CopyButton({ text, label = '복사' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="text-[11px] text-[var(--c-neutral-400)] hover:text-[var(--c-primary)] transition-colors flex items-center gap-[3px] shrink-0"
+    >
+      {copied ? '✓ 복사됨' : label}
+    </button>
+  );
+}
 
 export function Step8() {
   const { data, updateData, setStep, userOverrides } = useResearchStore();
@@ -78,14 +95,16 @@ export function Step8() {
         userOverrides
       );
 
-      const result = await runClaudeWithRetry(
+      const res = await runClaudeWithRetry(
         apiKey,
         {
-          system: 'You are an expert UX Researcher. Based on all research findings, identify and prioritize product opportunities. Return ONLY valid JSON.',
+          system: `You are an expert UX Researcher. Based on all research findings, identify and prioritize product opportunities. Return ONLY valid JSON.
+
+CRITICAL INSTRUCTION: Among the HMW (How Might We) questions derived in Step 2 (initial research), those that the user has marked as important via overrides must be treated as the TOP PRIORITY problems to solve. Derive Opportunities from those HMW questions first and assign them a high impact score (4 or 5).`,
           messages: [
             {
               role: 'user',
-              content: `Research context:\n${context}\n\nIdentify 6-10 product opportunities. Rate each by impact (1-5) and effort (1-5). Return JSON:\n{\n  "opportunities": [\n    {\n      "id": "o1",\n      "title": "기회 항목 제목",\n      "description": "왜 이 기회가 중요한지 1~2문장",\n      "impact": 4,\n      "effort": 2,\n      "category": "카테고리명"\n    }\n  ],\n  "summary": "기회 분석 전체 요약 2~3문장"\n}\nAll text in Korean. Be specific and actionable.`,
+              content: `Research context:\n${context}\n\n반드시 Step 2(초기 리서치)에서 도출된 HMW(How Might We) 질문 중, 사용자가 중요하다고 판단해 오버라이드(선택)한 내용을 최우선 해결 과제로 삼아 기회(Opportunity)를 도출하고, impact 점수를 높게 부여할 것.\n\nIdentify 6-10 product opportunities. Rate each by impact (1-5) and effort (1-5). Return JSON:\n{\n  "opportunities": [\n    {\n      "id": "o1",\n      "title": "기회 항목 제목",\n      "description": "왜 이 기회가 중요한지 1~2문장",\n      "impact": 4,\n      "effort": 2,\n      "category": "카테고리명"\n    }\n  ],\n  "summary": "기회 분석 전체 요약 2~3문장"\n}\nAll text in Korean. Be specific and actionable.`,
             },
           ],
         },
@@ -93,12 +112,29 @@ export function Step8() {
         setProgressMsg
       );
 
-      updateData('opportunityMap', result);
+      updateData('opportunityMap', res);
     } catch (err: any) {
       setError(err.message || '기회 지도 생성 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
+  };
+
+  // ── Patch helpers (userOverride=true → saved to userOverrides) ───────────────
+  const patchOpportunities = (updatedOpps: Opportunity[]) => {
+    updateData('opportunityMap', { ...(data.opportunityMap || {}), opportunities: updatedOpps }, true);
+  };
+
+  const saveSummary = (val: string) => {
+    updateData('opportunityMap', { ...(data.opportunityMap || {}), summary: val }, true);
+  };
+
+  const saveTitle = (oIdx: number, val: string) => {
+    patchOpportunities((result?.opportunities || []).map((o, i) => i === oIdx ? { ...o, title: val } : o));
+  };
+
+  const saveDescription = (oIdx: number, val: string) => {
+    patchOpportunities((result?.opportunities || []).map((o, i) => i === oIdx ? { ...o, description: val } : o));
   };
 
   const opportunities = result?.opportunities || [];
@@ -109,6 +145,15 @@ export function Step8() {
     'fill-ins': opportunities.filter(o => getQuadrant(o) === 'fill-ins'),
     'hard': opportunities.filter(o => getQuadrant(o) === 'hard'),
   };
+
+  const fullMapMarkdown = result ? [
+    `# 기회 지도`,
+    `## 요약\n${result.summary}`,
+    ...result.opportunities
+      .slice()
+      .sort((a, b) => (b.impact - b.effort) - (a.impact - a.effort))
+      .map(o => `## ${o.title} [임팩트:${o.impact} / 노력:${o.effort}]\n${o.description}\n*카테고리: ${o.category} / ${QUADRANT_CONFIG[getQuadrant(o)].label}*`),
+  ].join('\n\n') : '';
 
   return (
     <>
@@ -133,9 +178,19 @@ export function Step8() {
         </div>
       ) : opportunities.length > 0 ? (
         <div className="space-y-[20px]">
-          {/* Summary */}
+          {/* Summary + copy button */}
           <div className="bg-[var(--c-ai-subtle)] border border-[#BAE6FD] rounded-[var(--r-md)] p-[16px]">
-            <p className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed">{result?.summary}</p>
+            <div className="flex items-start justify-between gap-[12px]">
+              <EditableText
+                value={result?.summary ?? ''}
+                onSave={saveSummary}
+                as="textarea"
+                rows={3}
+                className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed flex-1"
+              />
+              {/* Copy entire map - top right */}
+              <CopyButton text={fullMapMarkdown} label="전체 복사" />
+            </div>
           </div>
 
           {/* View toggle */}
@@ -167,11 +222,18 @@ export function Step8() {
                       <p className="text-[11px]" style={{ color: cfg.textColor, opacity: 0.5 }}>해당 항목 없음</p>
                     ) : (
                       <ul className="space-y-[6px]">
-                        {items.map((o) => (
-                          <li key={o.id} className="text-[12px] font-semibold" style={{ color: cfg.textColor }}>
-                            • {o.title}
-                          </li>
-                        ))}
+                        {items.map((o, oIdx) => {
+                          const globalIdx = opportunities.findIndex(op => op.id === o.id);
+                          return (
+                            <li key={o.id} className="text-[12px] font-semibold" style={{ color: cfg.textColor }}>
+                              •{' '}
+                              <EditableText
+                                value={o.title}
+                                onSave={val => saveTitle(globalIdx, val)}
+                              />
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -183,23 +245,34 @@ export function Step8() {
               {opportunities
                 .slice()
                 .sort((a, b) => (b.impact - b.effort) - (a.impact - a.effort))
-                .map((opp) => {
+                .map((opp, sortedIdx) => {
+                  const globalIdx = opportunities.findIndex(o => o.id === opp.id);
                   const q = getQuadrant(opp);
                   const cfg = QUADRANT_CONFIG[q];
                   return (
                     <div key={opp.id} className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[16px]">
                       <div className="flex items-start justify-between gap-[12px]">
-                        <div className="flex-1">
+                        <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-[8px] mb-[4px]">
-                            <span className="text-[13.5px] font-bold text-[var(--c-neutral-900)]">{opp.title}</span>
+                            <EditableText
+                              value={opp.title}
+                              onSave={val => saveTitle(globalIdx, val)}
+                              className="text-[13.5px] font-bold text-[var(--c-neutral-900)]"
+                            />
                             <span
-                              className="text-[10px] font-bold px-[8px] py-[2px] rounded-full"
+                              className="text-[10px] font-bold px-[8px] py-[2px] rounded-full shrink-0"
                               style={{ backgroundColor: cfg.color, color: cfg.textColor }}
                             >
                               {cfg.label}
                             </span>
                           </div>
-                          <p className="text-[12px] text-[var(--c-neutral-700)]">{opp.description}</p>
+                          <EditableText
+                            value={opp.description}
+                            onSave={val => saveDescription(globalIdx, val)}
+                            as="textarea"
+                            rows={2}
+                            className="text-[12px] text-[var(--c-neutral-700)]"
+                          />
                           <span className="text-[10.5px] text-[var(--c-neutral-500)] mt-[4px] inline-block">{opp.category}</span>
                         </div>
                         <div className="shrink-0 text-right">

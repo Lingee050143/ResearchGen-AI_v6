@@ -112,3 +112,18 @@
     display: flex;
   }
 }
+
+/* ── Print styles (PDF download via window.print()) ──────────────────────── */
+@media print {
+  /* Hide sidebar (first child of root flex wrapper) */
+  body > div > div:first-child { display: none !important; }
+  /* Hide sticky topbar, step nav, and fixed bottom action bars */
+  .sticky, .fixed, .no-print { display: none !important; }
+  /* Remove overflow restrictions so full content prints */
+  body, html { height: auto !important; overflow: visible !important; }
+  body > div, body > div > div { height: auto !important; overflow: visible !important; }
+  /* Make main content full width */
+  main { max-width: 100% !important; padding: 20px !important; margin: 0 !important; }
+  /* Avoid page breaks inside report cards */
+  #report-print-area > div { page-break-inside: avoid; }
+}
