@@ -1,12 +1,24 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import { Copy } from 'lucide-react';
 import { useResearchStore } from '@/store/useResearchStore';
 import { useRouter } from 'next/navigation';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { EditableText } from '../ui/EditableText';
 import { useApiKey } from '../ui/ApiKeyModal';
 import { runClaudeWithRetry, buildContextMetadata } from '@/lib/claudeEngine';
 import { z } from 'zod';
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
+
+const TaggedReviewSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  sentiment: z.enum(['positive', 'neutral', 'negative']),
+  competitor: z.string(),
+  theme: z.string(),
+});
 
 const Step4Schema = z.object({
   sentiment: z.object({
@@ -24,12 +36,88 @@ const Step4Schema = z.object({
   topPainPoints: z.array(z.string()),
   topPraises: z.array(z.string()),
   summary: z.string(),
+  taggedReviews: z.array(TaggedReviewSchema).optional(),
 });
 
 type Step4Result = z.infer<typeof Step4Schema>;
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const SENTIMENT_FILTER = ['all', 'positive', 'neutral', 'negative'] as const;
 type SentimentFilter = typeof SENTIMENT_FILTER[number];
+
+const SENTIMENT_COLOR: Record<string, string> = {
+  positive: 'var(--c-success)',
+  neutral: 'var(--c-warning)',
+  negative: 'var(--c-error)',
+};
+const SENTIMENT_LABEL: Record<string, string> = {
+  positive: '긍정',
+  neutral: '중립',
+  negative: '부정',
+};
+
+const PAGE_SIZE = 15;
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function Toast({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <div
+      className="fixed z-[300] bg-[var(--c-neutral-900)] text-white text-[12px] font-semibold px-[16px] py-[8px] rounded-full shadow-lg pointer-events-none"
+      style={{ bottom: '80px', left: '50%', transform: 'translateX(-50%)' }}
+    >
+      ✓ {message}
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  total,
+  onChange,
+}: {
+  page: number;
+  total: number;
+  onChange: (p: number) => void;
+}) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  if (pages <= 1) return null;
+
+  const getPageNumbers = () => {
+    const nums: (number | '…')[] = [];
+    if (pages <= 7) {
+      for (let i = 1; i <= pages; i++) nums.push(i);
+    } else {
+      nums.push(1);
+      if (page > 3) nums.push('…');
+      for (let i = Math.max(2, page - 1); i <= Math.min(pages - 1, page + 1); i++) nums.push(i);
+      if (page < pages - 2) nums.push('…');
+      nums.push(pages);
+    }
+    return nums;
+  };
+
+  const btnClass = (active: boolean, disabled = false) =>
+    `min-w-[30px] h-[30px] flex items-center justify-center text-[12px] rounded-[4px] font-semibold transition-all
+     ${active ? 'bg-[var(--c-primary)] text-white' : 'bg-[var(--c-surface)] border border-[var(--c-border)] text-[var(--c-neutral-700)] hover:border-[var(--c-primary)]'}
+     ${disabled ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'cursor-pointer'}`;
+
+  return (
+    <div className="flex items-center gap-[4px] justify-center mt-[16px]">
+      <button className={btnClass(false, page === 1)} onClick={() => onChange(page - 1)}>‹</button>
+      {getPageNumbers().map((n, i) =>
+        n === '…'
+          ? <span key={`e${i}`} className="px-[4px] text-[var(--c-neutral-500)] text-[12px]">…</span>
+          : <button key={n} className={btnClass(n === page)} onClick={() => onChange(n as number)}>{n}</button>
+      )}
+      <button className={btnClass(false, page === pages)} onClick={() => onChange(page + 1)}>›</button>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Step4() {
   const { data, updateData, setStep, userOverrides } = useResearchStore();
@@ -39,16 +127,19 @@ export function Step4() {
   const [loading, setLoading] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<SentimentFilter>('all');
+  const [themeFilter, setThemeFilter] = useState<SentimentFilter>('all');
+  const [reviewFilter, setReviewFilter] = useState<SentimentFilter>('all');
+  const [reviewPage, setReviewPage] = useState(1);
+  const [toast, setToast] = useState('');
 
-  const result = data.insightsMap?.reviewAnalysis as Step4Result | undefined;
+  const result = (data.insightsMap as any)?.reviewAnalysis as Step4Result | undefined;
 
   useEffect(() => {
     setStep(4);
-    if (!result && apiKey) {
-      runAnalysis();
-    }
+    if (!result && apiKey) runAnalysis();
   }, [setStep, apiKey]);
+
+  // ── AI call ────────────────────────────────────────────────────────────────
 
   const runAnalysis = async () => {
     if (!apiKey) return;
@@ -56,8 +147,7 @@ export function Step4() {
     setError('');
 
     try {
-      const competitors = data.competitors || [];
-      // Sample up to 100 reviews per competitor for the prompt
+      const competitors = (data.competitors as any[]) || [];
       const reviewSample = competitors
         .filter((c: any) => c.name && c.reviews?.length)
         .map((c: any) => ({
@@ -70,22 +160,21 @@ export function Step4() {
 
       const context = buildContextMetadata({ idea: data.idea, step1Insights: data.step1Insights }, userOverrides);
 
-      const result = await runClaudeWithRetry(
+      const res = await runClaudeWithRetry(
         apiKey,
         {
-          system: 'You are an expert UX Researcher specializing in review analysis. Analyze competitor reviews and extract sentiment distribution, recurring themes, pain points, and praises. Return ONLY valid JSON.',
-          messages: [
-            {
-              role: 'user',
-              content: `Project context: ${context}\n\nCompetitor review samples:\n${JSON.stringify(reviewSample, null, 2)}\n\nAnalyze these reviews and return JSON:\n{\n  "sentiment": { "positive": 45, "neutral": 25, "negative": 30 },\n  "themes": [\n    { "id": "t1", "label": "테마 이름", "sentiment": "negative", "count": 120, "examples": ["example 1", "example 2"] }\n  ],\n  "topPainPoints": ["통증 포인트 1", "통증 포인트 2", "통증 포인트 3"],\n  "topPraises": ["칭찬 1", "칭찬 2", "칭찬 3"],\n  "summary": "전체 분석 요약 2~3문장"\n}\nGenerate 5-8 themes. All text in Korean.`,
-            },
-          ],
+          max_tokens: 6000,
+          system: 'You are an expert UX Researcher specializing in review analysis. Return ONLY valid JSON.',
+          messages: [{
+            role: 'user',
+            content: `Project context: ${context}\n\nCompetitor reviews:\n${JSON.stringify(reviewSample, null, 2)}\n\nReturn JSON:\n{\n  "sentiment": { "positive": 45, "neutral": 25, "negative": 30 },\n  "themes": [{ "id": "t1", "label": "테마", "sentiment": "negative", "count": 120, "examples": ["예시1", "예시2"] }],\n  "topPainPoints": ["포인트1", "포인트2", "포인트3"],\n  "topPraises": ["칭찬1", "칭찬2", "칭찬3"],\n  "summary": "전체 분석 요약 2~3문장",\n  "taggedReviews": [{ "id": "r1", "text": "리뷰 원문 (최대 150자)", "sentiment": "negative", "competitor": "경쟁사명", "theme": "연관 테마" }]\n}\nGenerate 5-8 themes. Include 50-60 representative taggedReviews (mix of sentiments). All text in Korean.`,
+          }],
         },
         Step4Schema,
         setProgressMsg
       );
 
-      updateData('insightsMap', { reviewAnalysis: result });
+      updateData('insightsMap', { ...(data.insightsMap || {}), reviewAnalysis: res });
     } catch (err: any) {
       setError(err.message || '리뷰 분석 중 오류가 발생했습니다.');
     } finally {
@@ -93,21 +182,87 @@ export function Step4() {
     }
   };
 
-  const filteredThemes = result?.themes.filter(
-    (t) => filter === 'all' || t.sentiment === filter
-  ) || [];
+  // ── Inline edit helpers ────────────────────────────────────────────────────
 
-  const sentimentColor: Record<string, string> = {
-    positive: 'var(--c-success)',
-    neutral: 'var(--c-warning)',
-    negative: 'var(--c-error)',
+  const patchAnalysis = (patch: Partial<Step4Result>) => {
+    updateData('insightsMap', {
+      ...(data.insightsMap || {}),
+      reviewAnalysis: { ...result, ...patch },
+    }, true);
   };
 
-  const sentimentLabel: Record<string, string> = {
-    positive: '긍정',
-    neutral: '중립',
-    negative: '부정',
+  const saveSummary = (v: string) => patchAnalysis({ summary: v });
+
+  const savePainPoint = (idx: number, v: string) => {
+    const arr = [...(result?.topPainPoints || [])];
+    arr[idx] = v;
+    patchAnalysis({ topPainPoints: arr });
   };
+
+  const savePraise = (idx: number, v: string) => {
+    const arr = [...(result?.topPraises || [])];
+    arr[idx] = v;
+    patchAnalysis({ topPraises: arr });
+  };
+
+  const saveThemeLabel = (themeId: string, v: string) => {
+    const themes = (result?.themes || []).map(t => t.id === themeId ? { ...t, label: v } : t);
+    patchAnalysis({ themes });
+  };
+
+  const saveThemeExample = (themeId: string, exIdx: number, v: string) => {
+    const themes = (result?.themes || []).map(t => {
+      if (t.id !== themeId) return t;
+      const examples = [...t.examples];
+      examples[exIdx] = v;
+      return { ...t, examples };
+    });
+    patchAnalysis({ themes });
+  };
+
+  // ── Copy helpers ──────────────────────────────────────────────────────────
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2000);
+  };
+
+  const copyTheme = (theme: Step4Result['themes'][number]) => {
+    const md = `## ${theme.label}\n**감정**: ${SENTIMENT_LABEL[theme.sentiment]} | **언급 수**: ${theme.count}건\n\n### 대표 사례\n${theme.examples.map(e => `- "${e}"`).join('\n')}`;
+    navigator.clipboard.writeText(md);
+    showToast('테마 카드가 복사됐습니다!');
+  };
+
+  const copyAll = () => {
+    if (!result) return;
+    const md = [
+      `# 리뷰 분석 결과`,
+      `## 감정 분포\n긍정 ${result.sentiment.positive}% / 중립 ${result.sentiment.neutral}% / 부정 ${result.sentiment.negative}%`,
+      `## 요약\n${result.summary}`,
+      `## 주요 페인포인트\n${result.topPainPoints.map(p => `- ${p}`).join('\n')}`,
+      `## 주요 칭찬 포인트\n${result.topPraises.map(p => `- ${p}`).join('\n')}`,
+      result.themes.map(t =>
+        `## 테마: ${t.label}\n**감정**: ${SENTIMENT_LABEL[t.sentiment]} | **언급 수**: ${t.count}건\n${t.examples.map(e => `- "${e}"`).join('\n')}`
+      ).join('\n\n'),
+    ].join('\n\n');
+    navigator.clipboard.writeText(md);
+    showToast('전체 분석 결과가 복사됐습니다!');
+  };
+
+  // ── Review table ──────────────────────────────────────────────────────────
+
+  const filteredReviews = (result?.taggedReviews || []).filter(
+    r => reviewFilter === 'all' || r.sentiment === reviewFilter
+  );
+  const pagedReviews = filteredReviews.slice((reviewPage - 1) * PAGE_SIZE, reviewPage * PAGE_SIZE);
+
+  // Reset page when filter changes
+  const handleReviewFilter = (f: SentimentFilter) => {
+    setReviewFilter(f);
+    setReviewPage(1);
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -117,7 +272,7 @@ export function Step4() {
       </div>
       <h1 className="text-[26px] font-[800] text-[var(--c-neutral-900)] tracking-[-0.02em] mb-[6px]">리뷰 분석</h1>
       <p className="text-[13.5px] text-[var(--c-neutral-500)] mb-[32px]">
-        경쟁사 리뷰에서 감정 분포와 핵심 테마를 추출합니다.
+        경쟁사 리뷰에서 감정 분포와 핵심 테마를 추출합니다. 텍스트를 클릭하면 직접 수정할 수 있습니다.
       </p>
 
       {loading ? (
@@ -131,42 +286,67 @@ export function Step4() {
           <Button variant="secondary" size="sm" className="mt-3" onClick={runAnalysis}>재시도</Button>
         </div>
       ) : result ? (
-        <div className="space-y-[24px]">
-          {/* Sentiment Distribution */}
+        <div className="space-y-[24px] pb-[80px]">
+
+          {/* Header actions */}
+          <div className="flex justify-end gap-[8px]">
+            <button
+              onClick={copyAll}
+              className="flex items-center gap-[5px] text-[11.5px] text-[var(--c-neutral-500)] hover:text-[var(--c-primary)] border border-[var(--c-border)] rounded-[var(--r-sm)] px-[10px] py-[5px] transition-all hover:border-[var(--c-primary)]"
+            >
+              <Copy size={12} />전체 복사
+            </button>
+            <button
+              onClick={runAnalysis}
+              className="text-[11.5px] text-[var(--c-neutral-500)] hover:text-[var(--c-primary)] border border-[var(--c-border)] rounded-[var(--r-sm)] px-[10px] py-[5px] transition-all hover:border-[var(--c-primary)]"
+            >
+              다시 생성
+            </button>
+          </div>
+
+          {/* 1. Sentiment Distribution */}
           <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[20px]">
             <h2 className="text-[14px] font-bold text-[var(--c-neutral-900)] mb-[16px]">감정 분포</h2>
             <div className="flex gap-[4px] h-[32px] rounded-[var(--r-sm)] overflow-hidden mb-[12px]">
-              {(['positive', 'neutral', 'negative'] as const).map((s) => (
+              {(['positive', 'neutral', 'negative'] as const).map(s => (
                 <div
                   key={s}
-                  style={{ width: `${result.sentiment[s]}%`, backgroundColor: sentimentColor[s] }}
-                  title={`${sentimentLabel[s]}: ${result.sentiment[s]}%`}
+                  style={{ width: `${result.sentiment[s]}%`, backgroundColor: SENTIMENT_COLOR[s] }}
+                  title={`${SENTIMENT_LABEL[s]}: ${result.sentiment[s]}%`}
                 />
               ))}
             </div>
             <div className="flex gap-[16px]">
-              {(['positive', 'neutral', 'negative'] as const).map((s) => (
+              {(['positive', 'neutral', 'negative'] as const).map(s => (
                 <div key={s} className="flex items-center gap-[6px]">
-                  <div className="w-[8px] h-[8px] rounded-full" style={{ backgroundColor: sentimentColor[s] }} />
-                  <span className="text-[12px] text-[var(--c-neutral-700)]">{sentimentLabel[s]} {result.sentiment[s]}%</span>
+                  <div className="w-[8px] h-[8px] rounded-full" style={{ backgroundColor: SENTIMENT_COLOR[s] }} />
+                  <span className="text-[12px] text-[var(--c-neutral-700)]">{SENTIMENT_LABEL[s]} {result.sentiment[s]}%</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Summary */}
-          <div className="bg-[var(--c-ai-subtle)] border border-[#BAE6FD] rounded-[var(--r-md)] p-[16px]">
-            <p className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed">{result.summary}</p>
+          {/* 2. Summary (editable) */}
+          <div className="bg-[#E0F2FE] border border-[#BAE6FD] rounded-[var(--r-md)] p-[16px]">
+            <p className="text-[11px] font-bold text-[var(--c-ai)] uppercase tracking-wider mb-[6px]">AI 요약</p>
+            <EditableText
+              value={result.summary}
+              onSave={saveSummary}
+              as="textarea"
+              rows={3}
+              className="text-[13px] text-[var(--c-neutral-700)] leading-relaxed w-full block"
+            />
           </div>
 
-          {/* Pain Points & Praises */}
+          {/* 3. Pain Points & Praises (editable) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[16px]">
             <div className="bg-[#FEF2F2] border border-[#FECACA] rounded-[var(--r-md)] p-[16px]">
               <h3 className="text-[13px] font-bold text-[#991B1B] mb-[10px]">주요 페인포인트</h3>
               <ul className="space-y-[6px]">
                 {result.topPainPoints.map((p, i) => (
                   <li key={i} className="text-[12.5px] text-[#7F1D1D] flex items-start gap-2">
-                    <span className="mt-[3px] shrink-0">•</span>{p}
+                    <span className="mt-[3px] shrink-0">•</span>
+                    <EditableText value={p} onSave={v => savePainPoint(i, v)} className="flex-1" />
                   </li>
                 ))}
               </ul>
@@ -176,56 +356,151 @@ export function Step4() {
               <ul className="space-y-[6px]">
                 {result.topPraises.map((p, i) => (
                   <li key={i} className="text-[12.5px] text-[#064E3B] flex items-start gap-2">
-                    <span className="mt-[3px] shrink-0">•</span>{p}
+                    <span className="mt-[3px] shrink-0">•</span>
+                    <EditableText value={p} onSave={v => savePraise(i, v)} className="flex-1" />
                   </li>
                 ))}
               </ul>
             </div>
           </div>
 
-          {/* Themes */}
+          {/* 4. Theme Cards (editable + copy) */}
           <div>
             <div className="flex items-center gap-[8px] mb-[12px]">
               <h2 className="text-[14px] font-bold text-[var(--c-neutral-900)]">테마별 분석</h2>
               <div className="flex gap-[4px]">
-                {SENTIMENT_FILTER.map((f) => (
+                {SENTIMENT_FILTER.map(f => (
                   <button
                     key={f}
-                    onClick={() => setFilter(f)}
-                    className={`text-[11px] px-[10px] py-[3px] rounded-full font-semibold transition-all ${filter === f ? 'bg-[var(--c-primary)] text-white' : 'bg-[var(--c-neutral-100)] text-[var(--c-neutral-500)] hover:bg-[var(--c-neutral-200)]'}`}
+                    onClick={() => setThemeFilter(f)}
+                    className={`text-[11px] px-[10px] py-[3px] rounded-full font-semibold transition-all ${themeFilter === f ? 'bg-[var(--c-primary)] text-white' : 'bg-[var(--c-neutral-100)] text-[var(--c-neutral-500)] hover:bg-[var(--c-neutral-200)]'}`}
                   >
-                    {f === 'all' ? '전체' : sentimentLabel[f]}
+                    {f === 'all' ? '전체' : SENTIMENT_LABEL[f]}
                   </button>
                 ))}
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-[12px]">
-              {filteredThemes.map((theme) => (
-                <div key={theme.id} className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[16px]">
-                  <div className="flex items-center justify-between mb-[8px]">
-                    <span className="text-[13.5px] font-bold text-[var(--c-neutral-900)]">{theme.label}</span>
-                    <div className="flex items-center gap-[6px]">
+              {result.themes
+                .filter(t => themeFilter === 'all' || t.sentiment === themeFilter)
+                .map(theme => (
+                  <div key={theme.id} className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] p-[16px] relative group/card">
+                    {/* Copy button */}
+                    <button
+                      onClick={() => copyTheme(theme)}
+                      className="absolute top-[10px] right-[10px] opacity-0 group-hover/card:opacity-100 transition-opacity p-[4px] rounded-[4px] text-[var(--c-neutral-400)] hover:text-[var(--c-primary)] hover:bg-[var(--c-primary-100)]"
+                      title="Markdown으로 복사"
+                    >
+                      <Copy size={13} />
+                    </button>
+
+                    <div className="flex items-center gap-[8px] mb-[8px] pr-[24px]">
+                      <EditableText
+                        value={theme.label}
+                        onSave={v => saveThemeLabel(theme.id, v)}
+                        className="text-[13.5px] font-bold text-[var(--c-neutral-900)]"
+                      />
                       <Badge variant={theme.sentiment === 'positive' ? 'success' : theme.sentiment === 'negative' ? 'error' : 'neutral'}>
-                        {sentimentLabel[theme.sentiment]}
+                        {SENTIMENT_LABEL[theme.sentiment]}
                       </Badge>
-                      <span className="text-[11px] text-[var(--c-neutral-500)]">{theme.count}건</span>
+                      <span className="text-[11px] text-[var(--c-neutral-500)] ml-auto shrink-0">{theme.count}건</span>
                     </div>
+
+                    <ul className="space-y-[4px]">
+                      {theme.examples.map((ex, i) => (
+                        <li key={i} className="text-[12px] text-[var(--c-neutral-700)] pl-[10px] border-l-[2px] border-[var(--c-border)] italic flex">
+                          <span className="mr-[2px]">"</span>
+                          <EditableText
+                            value={ex}
+                            onSave={v => saveThemeExample(theme.id, i, v)}
+                            className="flex-1"
+                          />
+                          <span className="ml-[2px]">"</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="space-y-[4px]">
-                    {theme.examples.map((ex, i) => (
-                      <li key={i} className="text-[12px] text-[var(--c-neutral-700)] pl-[10px] border-l-[2px] border-[var(--c-border)] italic">
-                        "{ex}"
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
+
+          {/* 5. Tagged Review Table (with pagination) */}
+          {(result.taggedReviews?.length ?? 0) > 0 && (
+            <div className="bg-[var(--c-surface)] border border-[var(--c-border)] rounded-[var(--r-md)] overflow-hidden">
+              {/* Table header */}
+              <div className="px-[16px] py-[12px] border-b border-[var(--c-border)] flex items-center justify-between flex-wrap gap-[8px]">
+                <h2 className="text-[14px] font-bold text-[var(--c-neutral-900)]">
+                  원본 피드백 리스트
+                  <span className="ml-[8px] text-[11px] font-normal text-[var(--c-neutral-500)]">
+                    ({filteredReviews.length}건)
+                  </span>
+                </h2>
+                {/* Sentiment filter tabs */}
+                <div className="flex gap-[4px]">
+                  {SENTIMENT_FILTER.map(f => (
+                    <button
+                      key={f}
+                      onClick={() => handleReviewFilter(f)}
+                      className={`text-[11px] px-[10px] py-[3px] rounded-full font-semibold transition-all ${reviewFilter === f ? 'bg-[var(--c-primary)] text-white' : 'bg-[var(--c-neutral-100)] text-[var(--c-neutral-500)] hover:bg-[var(--c-neutral-200)]'}`}
+                    >
+                      {f === 'all' ? `전체 ${result.taggedReviews!.length}` : `${SENTIMENT_LABEL[f]} ${result.taggedReviews!.filter(r => r.sentiment === f).length}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="bg-[var(--c-neutral-50)] border-b border-[var(--c-border)]">
+                      <th className="text-left px-[16px] py-[10px] text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider w-[40px]">#</th>
+                      <th className="text-left px-[12px] py-[10px] text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider">리뷰 내용</th>
+                      <th className="text-left px-[12px] py-[10px] text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider w-[72px]">감정</th>
+                      <th className="text-left px-[12px] py-[10px] text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider w-[100px]">경쟁사</th>
+                      <th className="text-left px-[12px] py-[10px] text-[11px] font-bold text-[var(--c-neutral-500)] uppercase tracking-wider w-[120px]">연관 테마</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--c-border)]">
+                    {pagedReviews.map((rev, i) => (
+                      <tr key={rev.id} className="hover:bg-[var(--c-neutral-50)] transition-colors">
+                        <td className="px-[16px] py-[10px] text-[var(--c-neutral-500)]">
+                          {(reviewPage - 1) * PAGE_SIZE + i + 1}
+                        </td>
+                        <td className="px-[12px] py-[10px] text-[var(--c-neutral-700)] leading-snug max-w-[400px]">
+                          {rev.text}
+                        </td>
+                        <td className="px-[12px] py-[10px]">
+                          <Badge variant={rev.sentiment === 'positive' ? 'success' : rev.sentiment === 'negative' ? 'error' : 'neutral'}>
+                            {SENTIMENT_LABEL[rev.sentiment]}
+                          </Badge>
+                        </td>
+                        <td className="px-[12px] py-[10px] text-[var(--c-neutral-700)]">{rev.competitor}</td>
+                        <td className="px-[12px] py-[10px] text-[var(--c-neutral-500)] text-[11.5px]">{rev.theme}</td>
+                      </tr>
+                    ))}
+                    {pagedReviews.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-[16px] py-[24px] text-center text-[var(--c-neutral-500)]">
+                          해당 감정의 리뷰가 없습니다.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="px-[16px] pb-[16px]">
+                <Pagination page={reviewPage} total={filteredReviews.length} onChange={p => { setReviewPage(p); }} />
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-center py-10 text-[var(--c-neutral-500)]">데이터를 불러올 수 없습니다.</div>
       )}
+
+      <Toast message={toast} />
 
       <div className="fixed bottom-0 left-0 md:left-[var(--sidebar-w)] right-0 bg-[var(--c-surface)] border-t border-[var(--c-border)] p-[12px_28px] flex items-center justify-between z-[100] shadow-[0_-4px_16px_rgba(26,24,64,0.06)]">
         <div className="flex items-center gap-[10px]">
