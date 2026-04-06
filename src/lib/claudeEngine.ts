@@ -89,7 +89,7 @@ export async function runClaudeWithRetry<T>(
         },
         body: JSON.stringify({
           // 3. 고유 모델명 강제 고정 (404 Not Found 에러 방어)
-          model: 'claude-3-5-sonnet-20240620',
+          model: options.model || 'claude-sonnet-4-6',
           max_tokens: options.max_tokens || 4096,
           temperature: options.temperature || 0.2,
           system: options.system,
