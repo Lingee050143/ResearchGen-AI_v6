@@ -7,7 +7,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { EditableText } from '../ui/EditableText';
 import { useApiKey } from '../ui/ApiKeyModal';
-import { runClaudeWithRetry, buildContextMetadata } from '@/lib/claudeEngine';
+import { runClaudeWithRetry, buildContextMetadata, generateAIReviews, ReviewsResult } from '@/lib/claudeEngine';
 import { z } from 'zod';
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -127,16 +127,23 @@ export function Step4() {
   const [loading, setLoading] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
   const [error, setError] = useState('');
+  const [aiMockLoading, setAiMockLoading] = useState(false);
+  const [aiMockProgressMsg, setAiMockProgressMsg] = useState('');
+  const [aiMockError, setAiMockError] = useState('');
   const [themeFilter, setThemeFilter] = useState<SentimentFilter>('all');
   const [reviewFilter, setReviewFilter] = useState<SentimentFilter>('all');
   const [reviewPage, setReviewPage] = useState(1);
   const [toast, setToast] = useState('');
 
   const result = (data.insightsMap as any)?.reviewAnalysis as Step4Result | undefined;
+  const isAiGenerated = !!(data.insightsMap as any)?.isAiGenerated;
+
+  const hasRealReviews = Array.isArray(data.competitors) &&
+    (data.competitors as any[]).some((c: any) => Array.isArray(c.reviews) && c.reviews.length > 0);
 
   useEffect(() => {
     setStep(4);
-    if (!result && apiKey) runAnalysis();
+    if (!result && apiKey && hasRealReviews) runAnalysis();
   }, [setStep, apiKey]);
 
   // ── AI call ────────────────────────────────────────────────────────────────
@@ -179,6 +186,65 @@ export function Step4() {
       setError(err.message || '리뷰 분석 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── AI mock review generator ───────────────────────────────────────────────
+
+  const runAIReviews = async () => {
+    if (!apiKey) return;
+    setAiMockLoading(true);
+    setAiMockError('');
+    setAiMockProgressMsg('');
+
+    try {
+      const ideaText = typeof data.idea === 'object'
+        ? ((data.idea as any).serviceName || (data.idea as any).idea || JSON.stringify(data.idea))
+        : String(data.idea || '');
+
+      const aiResult: ReviewsResult = await generateAIReviews(ideaText, apiKey, setAiMockProgressMsg);
+
+      // Map ReviewsResult → Step4Result for unified display
+      const mapped: Step4Result = {
+        sentiment: {
+          positive: aiResult.sentimentStats.positive,
+          neutral: aiResult.sentimentStats.neutral,
+          negative: aiResult.sentimentStats.negative,
+        },
+        themes: aiResult.topicClusters.map((cluster, i) => {
+          const clusterReviews = aiResult.reviews.filter((_, ri) => ri % aiResult.topicClusters.length === i);
+          const sentimentCounts = { positive: 0, negative: 0, neutral: 0 };
+          clusterReviews.forEach(r => sentimentCounts[r.sentiment.toLowerCase() as keyof typeof sentimentCounts]++);
+          const dominantSentiment = (Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0][0]) as 'positive' | 'negative' | 'neutral';
+          return {
+            id: `tc${i + 1}`,
+            label: cluster,
+            sentiment: dominantSentiment,
+            count: clusterReviews.length,
+            examples: clusterReviews.slice(0, 2).map(r => r.content),
+          };
+        }),
+        topPainPoints: aiResult.topComplaints,
+        topPraises: aiResult.praisedFeatures,
+        summary: `AI가 생성한 ${aiResult.reviews.length}개의 가상 사용자 리뷰 분석 결과입니다. 긍정 ${aiResult.sentimentStats.positive}% / 부정 ${aiResult.sentimentStats.negative}% / 중립 ${aiResult.sentimentStats.neutral}%`,
+        taggedReviews: aiResult.reviews.map(r => ({
+          id: r.id,
+          text: r.content,
+          sentiment: r.sentiment.toLowerCase() as 'positive' | 'negative' | 'neutral',
+          competitor: 'AI 가상 사용자',
+          theme: aiResult.topicClusters[aiResult.reviews.indexOf(r) % aiResult.topicClusters.length] || '일반',
+        })),
+      };
+
+      updateData('insightsMap', {
+        ...(data.insightsMap || {}),
+        reviewAnalysis: mapped,
+        isAiGenerated: true,
+      });
+    } catch (err: any) {
+      setAiMockError(err.message || 'AI 리뷰 생성 중 오류가 발생했습니다.');
+    } finally {
+      setAiMockLoading(false);
     }
   };
 
@@ -285,10 +351,53 @@ export function Step4() {
           <p className="text-[#B91C1C] text-[13px] font-semibold flex items-center gap-2">⚠️ {error}</p>
           <Button variant="secondary" size="sm" className="mt-3" onClick={runAnalysis}>재시도</Button>
         </div>
+      ) : !hasRealReviews && !result ? (
+        /* ── No CSV data: AI mock CTA ───────────────────────────────────── */
+        <div className="flex flex-col items-center justify-center py-[60px] px-[24px] text-center">
+          <div className="text-[48px] mb-[16px]">🤖</div>
+          <h2 className="text-[18px] font-[800] text-[var(--c-neutral-900)] mb-[8px]">업로드된 리뷰 데이터가 없습니다</h2>
+          <p className="text-[13px] text-[var(--c-neutral-500)] mb-[28px] max-w-[380px] leading-relaxed">
+            경쟁사 CSV를 업로드하지 않으셨나요? AI가 아이디어를 기반으로 가상의 사용자 리뷰 8개를 즉시 생성하고 분석해 드립니다.
+          </p>
+
+          {aiMockError && (
+            <div className="bg-[#FEF2F2] border border-[#FCA5A5] rounded-[var(--r-md)] p-[12px] mb-[16px] text-[12.5px] text-[#B91C1C] font-semibold w-full max-w-[420px]">
+              ⚠️ {aiMockError}
+            </div>
+          )}
+
+          {aiMockLoading ? (
+            <div className="flex flex-col items-center gap-[12px]">
+              <span className="w-[20px] h-[20px] border-[2.5px] border-purple-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-[13px] text-purple-700 font-semibold max-w-[320px]">
+                {aiMockProgressMsg || 'AI가 가상 사용자를 생성하고 리뷰를 분석 중입니다...'}
+              </p>
+            </div>
+          ) : (
+            <button
+              onClick={runAIReviews}
+              disabled={!apiKey}
+              className="inline-flex items-center gap-[10px] px-[28px] py-[14px] rounded-[var(--r-sm)] font-[700] text-[14px] text-white transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-400"
+              style={{
+                background: 'linear-gradient(135deg, #7C3AED, #4F46E5)',
+                boxShadow: '0 6px 20px rgba(124,58,237,0.35)',
+              }}
+            >
+              ✨ AI 가상 리뷰 8개 생성 및 분석하기
+            </button>
+          )}
+        </div>
       ) : result ? (
         <div className="space-y-[24px] pb-[80px]">
 
           {/* Header actions */}
+          <div className="flex justify-end gap-[8px]">
+            {isAiGenerated && (
+              <span className="inline-flex items-center gap-[5px] text-[11px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-[10px] py-[4px] rounded-full">
+                🤖 AI 가상 생성 데이터
+              </span>
+            )}
+          </div>
           <div className="flex justify-end gap-[8px]">
             <button
               onClick={copyAll}
@@ -497,7 +606,7 @@ export function Step4() {
           )}
         </div>
       ) : (
-        <div className="text-center py-10 text-[var(--c-neutral-500)]">데이터를 불러올 수 없습니다.</div>
+        <div className="text-center py-10 text-[var(--c-neutral-500)]">분석 결과가 없습니다. 다시 시도해 주세요.</div>
       )}
 
       <Toast message={toast} />
