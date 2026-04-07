@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// Maximum time to wait for the Claude API (60 seconds)
-const TIMEOUT_MS = 60000;
+// Maximum time to wait for the Claude API (180 seconds)
+const TIMEOUT_MS = 180000;
 const MAX_RETRIES = 3;
 
 interface ClaudeOptions {
@@ -131,6 +131,83 @@ export async function runClaudeWithRetry<T>(
   
   throw lastError;
 }
+
+// ─── AI Competitor Generator ─────────────────────────────────────────────────
+
+const CompetitorSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  pros: z.array(z.string()),
+  cons: z.array(z.string()),
+  links: z.object({
+    playStore: z.string().optional(),
+    appStore: z.string().optional(),
+    web: z.string().optional(),
+  }),
+});
+
+const CompetitorListSchema = z.object({
+  competitors: z.array(CompetitorSchema).length(4),
+});
+
+export type Competitor = z.infer<typeof CompetitorSchema>;
+export type CompetitorList = z.infer<typeof CompetitorListSchema>;
+
+/**
+ * Generate 4 AI-researched competitor profiles for the given idea.
+ * Returns validated JSON via Zod, applying the same security/defensive logic
+ * as runClaudeWithRetry (key sanitisation, required headers, model pin, markdown strip).
+ */
+export async function generateAICompetitors(
+  idea: string,
+  apiKey: string,
+  onProgress?: (msg: string) => void
+): Promise<CompetitorList> {
+  const systemPrompt = `You are a startup market research expert.
+Return ONLY valid JSON — no markdown fences, no extra text.`;
+
+  const userPrompt = `Research 4 real or highly plausible competitors for the following startup idea:
+
+"${idea}"
+
+Return a JSON object that exactly matches this schema:
+{
+  "competitors": [
+    {
+      "name": "string — real company or realistic product name",
+      "description": "string — one-sentence positioning",
+      "pros": ["string", "string", "string"],
+      "cons": ["string", "string", "string"],
+      "links": {
+        "playStore": "https://play.google.com/... (if applicable, otherwise omit)",
+        "appStore": "https://apps.apple.com/... (if applicable, otherwise omit)",
+        "web": "https://... (homepage URL, always include if the product has a website)"
+      }
+    }
+  ]
+}
+
+Rules:
+- Exactly 4 competitors.
+- Each competitor must include at least one link (web, playStore, or appStore). Include all that apply.
+- pros and cons must each have exactly 3 items.
+- Output ONLY the JSON object. No markdown, no explanation.`;
+
+  return runClaudeWithRetry<CompetitorList>(
+    apiKey,
+    {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2048,
+      temperature: 0.3,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    },
+    CompetitorListSchema,
+    onProgress
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Compress context based on previous step overrides and AI output
