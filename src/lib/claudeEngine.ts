@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// Maximum time to wait for the Claude API (180 seconds)
-const TIMEOUT_MS = 180000;
+// Maximum time to wait for the Claude API (1800 seconds)
+const TIMEOUT_MS = 1800000;
 const MAX_RETRIES = 3;
 
 interface ClaudeOptions {
