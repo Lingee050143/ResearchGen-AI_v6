@@ -207,6 +207,91 @@ Rules:
   );
 }
 
+// ─── AI Mock Review Generator ────────────────────────────────────────────────
+
+const ReviewSchema = z.object({
+  id: z.string(),
+  content: z.string(),
+  sentiment: z.enum(['Positive', 'Negative', 'Neutral']),
+  rating: z.number().int().min(1).max(5),
+});
+
+const ReviewsResultSchema = z.object({
+  reviews: z.array(ReviewSchema).length(8),
+  sentimentStats: z.object({
+    positive: z.number().int().min(0).max(100),
+    negative: z.number().int().min(0).max(100),
+    neutral: z.number().int().min(0).max(100),
+  }),
+  topComplaints: z.array(z.string()).min(1),
+  praisedFeatures: z.array(z.string()).min(1),
+  topicClusters: z.array(z.string()).min(1),
+});
+
+export type Review = z.infer<typeof ReviewSchema>;
+export type ReviewsResult = z.infer<typeof ReviewsResultSchema>;
+
+/**
+ * Generate 8 realistic mock user reviews for the given idea, including
+ * sentiment stats, top complaints, praised features, and topic clusters.
+ * Reuses runClaudeWithRetry with all defensive logic applied.
+ */
+export async function generateAIReviews(
+  idea: string,
+  apiKey: string,
+  onProgress?: (msg: string) => void
+): Promise<ReviewsResult> {
+  const systemPrompt = `You are a UX researcher specialising in user feedback analysis.
+Return ONLY valid JSON — no markdown fences, no extra text.`;
+
+  const userPrompt = `Generate 8 realistic mock user reviews for the following startup idea:
+
+"${idea}"
+
+Mix sentiments naturally: roughly 3 Positive, 3 Negative, 2 Neutral (adjust slightly for realism).
+Each review must be 1–2 sentences and feel like an authentic app-store or product review.
+
+Return a JSON object matching this EXACT schema (no extra keys):
+{
+  "reviews": [
+    {
+      "id": "r1",
+      "content": "string — 1-2 sentence realistic user review",
+      "sentiment": "Positive" | "Negative" | "Neutral",
+      "rating": 1-5
+    }
+  ],
+  "sentimentStats": {
+    "positive": integer 0-100,
+    "negative": integer 0-100,
+    "neutral": integer 0-100
+  },
+  "topComplaints": ["string", "string", "string"],
+  "praisedFeatures": ["string", "string", "string"],
+  "topicClusters": ["string", "string", "string"]
+}
+
+Rules:
+- Exactly 8 reviews (ids: r1–r8).
+- sentimentStats values must sum to 100.
+- topComplaints, praisedFeatures, topicClusters must each have exactly 3 items.
+- Ratings: Positive → 4-5, Negative → 1-2, Neutral → 3.
+- Output ONLY the JSON object. No markdown, no explanation.`;
+
+  return runClaudeWithRetry<ReviewsResult>(
+    apiKey,
+    {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2048,
+      temperature: 0.5,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    },
+    ReviewsResultSchema,
+    onProgress
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
