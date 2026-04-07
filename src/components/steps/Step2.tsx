@@ -104,9 +104,7 @@ export function Step2() {
     setAiError('');
     setAiProgressMsg('');
     try {
-      const ideaText = typeof data.idea === 'object'
-        ? (data.idea.serviceName || data.idea.idea || JSON.stringify(data.idea))
-        : String(data.idea || '');
+      const ideaText = typeof data.idea === 'object' ? JSON.stringify(data.idea) : String(data.idea || '');
       const result = await generateAICompetitors(ideaText, apiKey, setAiProgressMsg);
       const mapped = result.competitors.map((c, i) => toLocalCompetitor(c, i + 1));
       setLocalCompetitors(mapped);

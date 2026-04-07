@@ -198,9 +198,7 @@ export function Step4() {
     setAiMockProgressMsg('');
 
     try {
-      const ideaText = typeof data.idea === 'object'
-        ? ((data.idea as any).serviceName || (data.idea as any).idea || JSON.stringify(data.idea))
-        : String(data.idea || '');
+      const ideaText = typeof data.idea === 'object' ? JSON.stringify(data.idea) : String(data.idea || '');
 
       const aiResult: ReviewsResult = await generateAIReviews(ideaText, apiKey, setAiMockProgressMsg);
 
