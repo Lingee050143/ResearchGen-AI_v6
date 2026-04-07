@@ -20,6 +20,64 @@ export class APIExecutionError extends Error {
 }
 
 /**
+ * Robustly extracts a JSON string from a raw AI response.
+ *
+ * Strategy (in order of priority):
+ *  1. Markdown code fence  ```json … ```  or  ``` … ```
+ *  2. Bracket-balanced extraction — finds the outermost { } or [ ] block
+ *     and walks the string character-by-character, respecting string
+ *     literals and escape sequences so nested braces/brackets inside
+ *     JSON values don't confuse the depth counter.
+ *  3. Fallback — return the trimmed raw string and let JSON.parse decide.
+ */
+function extractJson(raw: string): string {
+  // 1. Markdown code fence (```json … ``` or ``` … ```)
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+
+  // 2. Find whichever outermost delimiter comes first
+  const objIdx = raw.indexOf('{');
+  const arrIdx = raw.indexOf('[');
+
+  let start: number;
+  let openChar: string;
+  let closeChar: string;
+
+  if (objIdx === -1 && arrIdx === -1) return raw.trim();
+
+  if (objIdx === -1 || (arrIdx !== -1 && arrIdx < objIdx)) {
+    start = arrIdx; openChar = '['; closeChar = ']';
+  } else {
+    start = objIdx; openChar = '{'; closeChar = '}';
+  }
+
+  // Walk the string, tracking string literals to avoid counting
+  // brackets/braces that appear inside quoted values.
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+
+    if (!inString) {
+      if (ch === openChar) depth++;
+      else if (ch === closeChar) {
+        depth--;
+        if (depth === 0) return raw.slice(start, i + 1).trim();
+      }
+    }
+  }
+
+  // 3. Fallback
+  return raw.trim();
+}
+
+/**
  * Validates a parsed JSON object against a Zod schema.
  * Re-throws an error to trigger retry if invalid.
  */
@@ -106,9 +164,9 @@ export async function runClaudeWithRetry<T>(
       const data = await response.json();
       const content = data.content[0]?.text || '';
       
-      // 4. JSON 파싱 전 Markdown 블록 제거 (파싱 에러 방어)
-      const cleanJson = content.replace(/```(?:json)?([\s\S]*?)```/g, '$1').trim();
-      
+      // 4. JSON 파싱 전 Markdown 블록 및 부가 텍스트 제거 (파싱 에러 방어)
+      const cleanJson = extractJson(content);
+
       const parsed = JSON.parse(cleanJson);
       
       // Zod validation. If it fails, an error is thrown and caught by retry block.
