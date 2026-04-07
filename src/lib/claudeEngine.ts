@@ -19,62 +19,19 @@ export class APIExecutionError extends Error {
   }
 }
 
-/**
- * Robustly extracts a JSON string from a raw AI response.
- *
- * Strategy (in order of priority):
- *  1. Markdown code fence  ```json … ```  or  ``` … ```
- *  2. Bracket-balanced extraction — finds the outermost { } or [ ] block
- *     and walks the string character-by-character, respecting string
- *     literals and escape sequences so nested braces/brackets inside
- *     JSON values don't confuse the depth counter.
- *  3. Fallback — return the trimmed raw string and let JSON.parse decide.
- */
-function extractJson(raw: string): string {
-  // 1. Markdown code fence (```json … ``` or ``` … ```)
-  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
+function extractJson(content: string): string {
+  // 1. 마크다운 코드 블록을 무조건, 예외 없이 전부 삭제
+  let clean = content.replace(/```[a-zA-Z]*\n?/gi, '').replace(/```/g, '').trim();
 
-  // 2. Find whichever outermost delimiter comes first
-  const objIdx = raw.indexOf('{');
-  const arrIdx = raw.indexOf('[');
+  // 2. 첫 번째 '{' 와 마지막 '}' 사이의 텍스트만 무식하게 파냄
+  const firstIdx = clean.indexOf('{');
+  const lastIdx = clean.lastIndexOf('}');
 
-  let start: number;
-  let openChar: string;
-  let closeChar: string;
-
-  if (objIdx === -1 && arrIdx === -1) return raw.trim();
-
-  if (objIdx === -1 || (arrIdx !== -1 && arrIdx < objIdx)) {
-    start = arrIdx; openChar = '['; closeChar = ']';
-  } else {
-    start = objIdx; openChar = '{'; closeChar = '}';
+  if (firstIdx !== -1 && lastIdx !== -1 && lastIdx >= firstIdx) {
+    return clean.substring(firstIdx, lastIdx + 1);
   }
 
-  // Walk the string, tracking string literals to avoid counting
-  // brackets/braces that appear inside quoted values.
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = start; i < raw.length; i++) {
-    const ch = raw[i];
-
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-
-    if (!inString) {
-      if (ch === openChar) depth++;
-      else if (ch === closeChar) {
-        depth--;
-        if (depth === 0) return raw.slice(start, i + 1).trim();
-      }
-    }
-  }
-
-  // 3. Fallback
-  return raw.trim();
+  return clean;
 }
 
 /**
