@@ -8,15 +8,30 @@ const STEPS = [
   '인사이트 맵', '페르소나', '사용자 여정', '기회 지도', 'UX 보고서'
 ];
 
+function canAccessStep(stepNum: number, data: Record<string, unknown>): boolean {
+  switch (stepNum) {
+    case 1: return true;
+    case 2: return !!(data.idea as { serviceName?: string } | undefined)?.serviceName;
+    case 3: return !!data.step1Insights;
+    case 4: return !!data.competitors;
+    case 5: return !!(data.insightsMap as { reviewAnalysis?: unknown } | undefined)?.reviewAnalysis;
+    case 6: return !!data.personas;
+    case 7: return !!data.journeyMap;
+    case 8: return !!data.opportunityMap;
+    case 9: return !!data.finalReport;
+    default: return false;
+  }
+}
+
 export function StepNavigation() {
-  const { currentStep } = useResearchStore();
+  const { currentStep, data } = useResearchStore();
   const router = useRouter();
   const pathname = usePathname();
 
   if (pathname === '/dashboard') return null;
 
   const handleStepClick = (stepNum: number) => {
-    if (stepNum <= currentStep) {
+    if (canAccessStep(stepNum, data as Record<string, unknown>)) {
       router.push(`/steps/${stepNum}`);
     }
   };
@@ -27,12 +42,13 @@ export function StepNavigation() {
         const stepNum = i + 1;
         const isActive = currentStep === stepNum;
         const isDone = currentStep > stepNum;
+        const accessible = canAccessStep(stepNum, data as Record<string, unknown>);
 
         return (
-          <div 
+          <div
             key={stepNum}
             onClick={() => handleStepClick(stepNum)}
-            className={`flex items-center gap-[7px] pr-[14px] relative shrink-0 ${stepNum <= currentStep ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'} ${i !== STEPS.length - 1 ? 'after:content-[""] after:absolute after:right-[4px] after:top-1/2 after:-translate-y-1/2 after:w-[16px] after:h-[1.5px] ' + (isDone ? 'after:bg-[var(--c-primary)]' : 'after:bg-[var(--c-border)]') : ''}`}
+            className={`flex items-center gap-[7px] pr-[14px] relative shrink-0 ${accessible ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'} ${i !== STEPS.length - 1 ? 'after:content-[""] after:absolute after:right-[4px] after:top-1/2 after:-translate-y-1/2 after:w-[16px] after:h-[1.5px] ' + (isDone ? 'after:bg-[var(--c-primary)]' : 'after:bg-[var(--c-border)]') : ''}`}
           >
             <div className={`w-[24px] h-[24px] rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
               isActive 

@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 
 export function useApiKey() {
   const [apiKey, setApiKeyState] = useState<string | null>(null);
@@ -28,12 +29,18 @@ export function useApiKey() {
   return { apiKey, setApiKey };
 }
 
+const DEFERRED_PATHS = ['/', '/dashboard', '/steps/1'];
+
 export function ApiKeyModal() {
   const { apiKey, setApiKey } = useApiKey();
   const [input, setInput] = useState('');
+  const pathname = usePathname();
 
   // 이미 세션에 키가 있으면 모달을 띄우지 않음
-  if (apiKey !== null) return null; 
+  if (apiKey !== null) return null;
+
+  // AI 통신이 필요 없는 초기 페이지에서는 모달을 띄우지 않음
+  if (DEFERRED_PATHS.includes(pathname)) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[999] flex items-center justify-center p-4">

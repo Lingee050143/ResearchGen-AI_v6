@@ -10,8 +10,23 @@ const STEPS = [
   '인사이트 맵', '페르소나', '사용자 여정', '기회 지도', 'UX 보고서'
 ];
 
+function canAccessStep(stepNum: number, data: Record<string, unknown>): boolean {
+  switch (stepNum) {
+    case 1: return true;
+    case 2: return !!(data.idea as { serviceName?: string } | undefined)?.serviceName;
+    case 3: return !!data.step1Insights;
+    case 4: return !!data.competitors;
+    case 5: return !!(data.insightsMap as { reviewAnalysis?: unknown } | undefined)?.reviewAnalysis;
+    case 6: return !!data.personas;
+    case 7: return !!data.journeyMap;
+    case 8: return !!data.opportunityMap;
+    case 9: return !!data.finalReport;
+    default: return false;
+  }
+}
+
 export function Sidebar() {
-  const { currentStep, startNewResearch } = useResearchStore();
+  const { currentStep, startNewResearch, data } = useResearchStore();
   const router = useRouter();
   const pathname = usePathname();
   const isDashboard = pathname === '/dashboard';
@@ -62,17 +77,10 @@ export function Sidebar() {
         const stepNum = i + 1;
         const isActive = !isDashboard && currentStep === stepNum;
         const isDone = !isDashboard && currentStep > stepNum;
+        const accessible = canAccessStep(stepNum, data as Record<string, unknown>);
 
-        return (
-          <Link
-            key={stepNum}
-            href={`/steps/${stepNum}`}
-            className={`flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] transition-all relative ${
-              isActive
-                ? 'bg-[rgba(14,165,233,0.18)] text-white font-semibold before:content-[""] before:absolute before:-left-[8px] before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-[18px] before:bg-[var(--c-ai)] before:rounded-[0_2px_2px_0]'
-                : 'text-[var(--c-sidebar-text)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#e0e0f0]'
-            }`}
-          >
+        const innerContent = (
+          <>
             <div className={`w-[18px] h-[18px] rounded-full border-[1.5px] flex items-center justify-center text-[9.5px] font-bold shrink-0 ${
               isActive
                 ? 'bg-[var(--c-ai)] border-[var(--c-ai)] text-white'
@@ -83,6 +91,33 @@ export function Sidebar() {
               {isDone ? '✓' : stepNum}
             </div>
             {label}
+          </>
+        );
+
+        const baseClass = `flex items-center gap-[9px] p-[7px_14px] m-[1px_8px] rounded-[var(--r-sm)] text-[12px] transition-all relative`;
+
+        if (!accessible) {
+          return (
+            <div
+              key={stepNum}
+              className={`${baseClass} opacity-50 cursor-not-allowed text-[var(--c-sidebar-text)]`}
+            >
+              {innerContent}
+            </div>
+          );
+        }
+
+        return (
+          <Link
+            key={stepNum}
+            href={`/steps/${stepNum}`}
+            className={`${baseClass} ${
+              isActive
+                ? 'bg-[rgba(14,165,233,0.18)] text-white font-semibold before:content-[""] before:absolute before:-left-[8px] before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-[18px] before:bg-[var(--c-ai)] before:rounded-[0_2px_2px_0]'
+                : 'text-[var(--c-sidebar-text)] hover:bg-[rgba(255,255,255,0.06)] hover:text-[#e0e0f0]'
+            }`}
+          >
+            {innerContent}
           </Link>
         );
       })}
